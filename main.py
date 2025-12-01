@@ -40,7 +40,7 @@ def W(u):
 # ============================================================
 # 3️⃣ Main Reconstruction Loop (Adam)
 # ============================================================
-def run_reconstruction(f, lam=0.5, lr=1e-2, h=0.5, beta=5, M=1.0, p=4, max_iter=200):
+def run_reconstruction(f, lam=0.5, lr=1e-2, h=0.5, beta=5, M=1.0, p=20, max_iter=40):
     """Gradient-based image restoration with your regularizer."""
     u = (f + 0.05 * torch.randn_like(f)).clone().detach().requires_grad_(True)
     optimizer = torch.optim.Adam([u], lr=lr)
@@ -49,7 +49,7 @@ def run_reconstruction(f, lam=0.5, lr=1e-2, h=0.5, beta=5, M=1.0, p=4, max_iter=
     with torch.no_grad():
         z_init = W(u)
     N = z_init.shape[0]
-    neighbors = [torch.arange(max(0, i-2), min(N, i+3)) for i in range(N)]
+    neighbors = [torch.arange(max(0, i-4), min(N, i+5)) for i in range(N)]
 
     for it in range(max_iter):
         optimizer.zero_grad()
@@ -86,7 +86,7 @@ f_noisy = f + noise
 plt.figure(figsize=(6,3))
 plt.subplot(1,2,1); plt.imshow(f.squeeze(), cmap="gray"); plt.title("Original")
 plt.subplot(1,2,2); plt.imshow(f_noisy.squeeze(), cmap="gray"); plt.title("Noisy")
-plt.show()
+
 
 # ============================================================
 # 5️⃣ Run Reconstruction
