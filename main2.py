@@ -32,19 +32,19 @@ def data_fidelity_grad(u, f, A_forward = None, A_adjoint = None):
 def W(u):
     return 0
 
-def run_reconstruction(f, lam=0.5, lr=1e-2, h=0.5, beta=5, M=1.0, p=20, r = 2, max_iter=100):
+def run_reconstruction(f, lam=0.75, lr=1.5e-2, h=0.5, beta=5, M=0.2, p=4, r = 4, max_iter=50):
     u = f.copy()
 
     for it in range(max_iter):
-        z, coeffs, transform = WT(u)
+
         if it % 10 == 0 or it == max_iter - 1:
-            print(f"Iter {it:4d} | Data: {data_fidelity(u,f):.4f} | R(u): {compute_R(z, h, beta, M, p, r):.4f}")
+            print(f"Iter {it:4d} | Data: {data_fidelity(u,f):.4f} | R(u): {compute_R(u, h, beta, M, p, r):.4f}")
 
 
         # Now safely apply inverse (adjoint mapping back to image space)
-        grad_R_z = compute_grad_R(z, beta, M, p, r, h)  # 2) gradient in wavelet domain
-
-        grad_F = data_fidelity_grad(u,f) + lam * grad_R_z  # full gradient
+        grad_R_u = compute_grad_R(u, beta, M, p, r, h)  # 2) gradient in wavelet domain
+        grad_R_u = grad_R_u[:u.shape[0], :u.shape[1]]
+        grad_F = data_fidelity_grad(u,f) + lam * grad_R_u  # full gradient
 
         # Update
         u = u - lr * grad_F

@@ -1,5 +1,6 @@
 import numpy as np
 import dtcwt
+import pywt
 
 def phi_beta_M(t, beta=5, M=0.2):
     x = beta * (t - M)
@@ -31,88 +32,82 @@ def local_p_norm(m, i, j, p=8, r=2):
     local = m[row_start:row_end + 1, col_start:col_end + 1]
     return np.sum(local ** p) ** (1 / p)
 
-def WT(u):
+
+
+
+def WT(u, wavelet='bior4.4'):
     """
-       Apply DTCWT and return ONLY the finest-scale highpass coefficients.
-       """
-    transform = dtcwt.Transform2d()
-    coeffs = transform.forward(u)
-
-    # Finest scale = coeffs.highpasses[0], shape (6, H/2, W/2)
-    z = coeffs.highpasses[0]
-
-    return z, coeffs, transform
-
-
-
-
-
-def compute_R(z, h=0.5, beta=5, M=1, p=8, r=3):
+    Apply PyWavelets 2D transform (single level) using bior4.4.
+    Returns detail coefficients stacked as z: (3, H, W).
     """
-    Compute R(z) = h^2 ∑ φ_{β,M}( g_{i,p}(z) ).
+    coeffs = pywt.wavedec2(u, wavelet=wavelet, level=1)
+    cA, (cH, cV, cD) = coeffs
 
-    Parameters:
-        z: wavelet coefficients, shape (K, H, W)
-        h: scaling constant (pixel size or grid spacing)
-        p: exponent for neighborhood p-norm
-        r: neighborhood radius (box window)
-    """
+    # Stack only detail coefficients
+    z = np.stack([cH, cV, cD])  # shape = (3, H, W)
+    return z, coeffs
 
 
-    # --- Step 2: compute per-pixel L2 magnitude of z across orientations ---
-    m = np.sqrt(np.sum(np.abs(z) ** 2, axis=0))  # shape (H, W)
+
+
+
+
+def compute_R(u, h=0.5, beta=5, M=1, p=8, r=3, wavelet='bior4.4'):
+    z, coeffs = WT(u, wavelet)   # z: (3, H, W)
+    m = np.sqrt(np.sum(z**2, axis=0)) # (H, W)
 
     H, W = m.shape
-    R_total = 0.0
+    R_total = 0.
 
-    # Step 2: loop over pixels (i,j) and compute R
     for i in range(H):
         for j in range(W):
             g_ij = local_p_norm(m, i, j, p=p, r=r)
             R_total += phi_beta_M(g_ij, beta=beta, M=M)
 
-    return h ** 2 * R_total
+    return h**2 * R_total
 
 
-def compute_grad_R(z, beta=5, M=0.2, p=8, r=2, h=0.5):
+def compute_grad_R(u, beta=5, M=0.2, p=8, r=2, h=0.5, wavelet='bior4.4'):
     """
-    Compute ∇R/∇z where R(z) = h^2 * sum φ(g_i(z)),
-    and z has shape (K, H, W) from DTCWT.
+    Compute ∇R/∇u using PyWavelets (real-valued).
     """
-    K, H, W = z.shape
+    z, coeffs = WT(u, wavelet)  # z: (3, H, W)
+    K, H_, W_ = z.shape
 
-    # Magnitude of z across channels/orientations
-    m = np.sqrt(np.sum(np.abs(z)**2, axis=0))   # (H, W)
+    # Magnitude across channels
+    m = np.sqrt(np.sum(z**2, axis=0)) + 1e-8
 
-    # Store g_i values
-    g_matrix = np.zeros((H, W))
-
-    # Step 1: compute g_i for all pixels
-    for i in range(H):
-        for j in range(W):
+    # Precompute g(i,j)
+    g_matrix = np.zeros_like(m)
+    for i in range(H_):
+        for j in range(W_):
             g_matrix[i, j] = local_p_norm(m, i, j, p=p, r=r)
 
-    # Step 2: Compute gradient ∂R/∂z
-    grad_R_z = np.zeros_like(z, dtype=np.complex128)
+    # Allocate gradient in wavelet domain
+    grad_R_z = np.zeros_like(z)
 
-    for k1 in range(H):
-        for k2 in range(W):
+    # Loop through all pixels
+    for k1 in range(H_):
+        for k2 in range(W_):
 
-            # Skip pixels where ||z||=0
             if m[k1, k2] == 0:
                 continue
 
-            for i in range(max(k1-r,0), min(k1+r+1, H)):
-                for j in range(max(k2-r,0), min(k2+r+1, W)):
-
+            for i in range(max(0, k1-r), min(H_, k1+r+1)):
+                for j in range(max(0, k2-r), min(W_, k2+r+1)):
                     g_ij = g_matrix[i, j]
 
-                    # Derivative φ'(g) = -σ(β(g - M))
+                    # φ'(g)
                     phi_prime = -1 / (1 + np.exp(-beta*(g_ij - M)))
 
-                    # ∂g/∂z = |z|^{p-2} * z * g^{1-p}
-                    dz = (np.abs(z[:, k1, k2])**(p-2)) * z[:, k1, k2] * (g_ij**(1-p))
+                    # ∂g/∂z
+                    dz = (np.abs(z[:,k1,k2])**(p-2)) * z[:,k1,k2] * (g_ij**(1-p))
 
-                    grad_R_z[:, k1, k2] += h**2 * phi_prime * dz
+                    grad_R_z[:,k1,k2] += h**2 * phi_prime * dz
 
-    return grad_R_z
+    # Map back to image domain using inverse wavelet transform
+    # Replace only the detail subbands; keep original approximation
+    grad_coeffs = [coeffs[0], tuple(grad_R_z)]
+    grad_R_u = pywt.waverec2(grad_coeffs, wavelet)
+
+    return grad_R_u
